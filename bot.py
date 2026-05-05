@@ -11,7 +11,7 @@ from datetime import datetime
 from collections import defaultdict
 
 # ==================== التوكن والمتغيرات ====================
-TOKEN = '8558756991:AAEnr1LAzeeW4dngAH59TpP7OJ-XZgub8TU'
+TOKEN = '8558756991:AAFJdcA4GqFBbLCDzZK53MtbE58QI2La5X4'
 bot = telebot.TeleBot(TOKEN)
 bot.remove_webhook()
 
