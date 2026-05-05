@@ -18,7 +18,7 @@ bot.remove_webhook()
 OWNER_ID = 1013384909  # ضع معرفك هنا
 
 # ==================== البروكسي الثابت ====================
-FIXED_PROXY = "http://iEN2jEvl:5TqD95Nm664K@proxy.taquito.pp.ua:8080"
+FIXED_PROXY = "http://ydqjeiy9smojyhnkttgec5+BYdoiLLl:jyvytnua9y@gr-direct.speedyhub.net:21033"
 
 # ==================== ملفات التخزين ====================
 SITES_FILE = "sites.json"
