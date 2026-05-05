@@ -6,7 +6,7 @@ import random
 from time import sleep
 
 # التوكن الخاص بك (تأكد منه 100%)
-TOKEN = '8558756991:AAHswTBL0ds0QaAaAyBuwvJtTCsNbPRyd5A'
+TOKEN = '8558756991:AAEI3hVYaEQdmWa1HmaocFo9Lm3BxQFLgzo'
 bot = telebot.TeleBot(TOKEN)
 
 # حذف أي عملية قديمة معلقة للبوت
